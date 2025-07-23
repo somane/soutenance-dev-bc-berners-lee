@@ -1,5 +1,7 @@
 // src/App.js
 import React, { useState, useEffect } from 'react';
+import EventsDisplay from './components/EventsDisplay';
+
 import { ethers } from 'ethers';
 import { 
   Calendar, 
@@ -18,8 +20,8 @@ import {
 } from 'lucide-react';
 
 // Configuration - À remplacer par vos valeurs
-const BLOCKEVENT_ADDRESS = process.env.REACT_APP_BLOCKEVENT_ADDRESS || "0x5FbDB2315678afecb367f032d93F642f64180aa3";
-const BLOCKTOKEN_ADDRESS = process.env.REACT_APP_BLOCKTOKEN_ADDRESS || "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+const BLOCKEVENT_ADDRESS = process.env.REACT_APP_BLOCKEVENT_ADDRESS || "0x8a9bD417F6a7fc83DBFe5268bF53AEA04682683c";
+const BLOCKTOKEN_ADDRESS = process.env.REACT_APP_BLOCKTOKEN_ADDRESS || "0xd40e17fd7c1cc99e34189f313572d691F208b06c";
 
 // ABI minimal des contrats
 const BLOCKEVENT_ABI = [
@@ -112,7 +114,11 @@ function App() {
       showMessage('success', 'Wallet connecté!');
       
       // Charger les données
-      await loadAllData(blockEventContract, blockTokenContract, accounts[0]);
+      //await loadAllData(blockEventContract, blockTokenContract, accounts[0]);
+      await loadEvents(blockEventContract);
+      await loadMyTickets(blockEventContract, accounts[0]);
+      await loadMyEvents(blockEventContract, accounts[0]);
+      await loadTokenBalance(blockTokenContract, accounts[0]);
       
       // Écouter les événements
       setupEventListeners(blockEventContract);
@@ -155,84 +161,165 @@ function App() {
     }
   };
 
-  // Charger les événements
-  const loadEvents = async (contract) => {
+const loadEvents = async (contract) => {
+  if (!contract) {
+    console.log("❌ loadEvents: Pas de contrat!");
+    return;
+  }
+  
+  try {
+    setLoading(true);
+    console.log("🔍 Chargement des événements depuis la blockchain...");
+    console.log("📍 Contract address:", contract.address);
+    
+    // Méthode 1 : Utiliser les logs EventCreated
     try {
-      // Dans une vraie DApp, on utiliserait des events ou un indexeur
-      // Ici on simule avec des données d'exemple
-      const mockEvents = [
-        {
-          id: 1,
-          name: "Festival Rock 2024",
-          date: new Date('2024-07-15'),
-          organizer: '0x742d35Cc6634C0532925a3b844Bc9e7595f7BBEa',
-          isActive: true,
-          totalRevenue: '0',
-          voteCount: 0,
-          tickets: [
-            { 
-              id: 1, 
-              name: 'Early Bird', 
-              price: '0.03', 
-              maxSupply: 500,
-              currentSupply: 125,
-              hasOptions: false 
-            },
-            { 
-              id: 2, 
-              name: 'Standard', 
-              price: '0.05', 
-              maxSupply: 1000,
-              currentSupply: 342,
-              hasOptions: false 
-            },
-            { 
-              id: 3, 
-              name: 'VIP', 
-              price: '0.1', 
-              maxSupply: 100,
-              currentSupply: 67,
-              hasOptions: true,
-              options: 'Accès backstage + T-shirt' 
-            }
-          ]
-        },
-        {
-          id: 2,
-          name: "Concert Jazz Intime",
-          date: new Date('2024-06-20'),
-          organizer: '0x5aAeb6053f3E94C9b9A09f33669435E7Ef1BeAed',
-          isActive: true,
-          totalRevenue: '0',
-          voteCount: 5,
-          tickets: [
-            { 
-              id: 4, 
-              name: 'Placement libre', 
-              price: '0.02', 
-              maxSupply: 200,
-              currentSupply: 45,
-              hasOptions: false 
-            },
-            { 
-              id: 5, 
-              name: 'Table VIP', 
-              price: '0.08', 
-              maxSupply: 20,
-              currentSupply: 12,
-              hasOptions: true,
-              options: 'Table de 4 + Champagne' 
-            }
-          ]
-        }
-      ];
+      const eventFilter = contract.filters.EventCreated();
+      const eventLogs = await contract.queryFilter(eventFilter, 0, 'latest');
+      console.log(` ${eventLogs.length} événements créés trouvés dans les logs`);
       
-      setEvents(mockEvents);
-    } catch (error) {
-      console.error('Erreur chargement events:', error);
+      if (eventLogs.length > 0) {
+        const eventsData = [];
+        
+        for (const log of eventLogs) {
+          const eventId = log.args.eventId.toNumber();
+          console.log(`\n Chargement événement ${eventId}...`);
+          
+          try {
+            // Récupérer les infos de l'événement
+            const eventInfo = await contract.getEventInfo(eventId);
+            
+            const event = {
+              id: eventId,
+              name: eventInfo[0],
+              organizer: eventInfo[1],
+              date: new Date(eventInfo[2].toNumber() * 1000),
+              isActive: eventInfo[3],
+              isCancelled: eventInfo[4],
+              totalRevenue: ethers.utils.formatEther(eventInfo[5]),
+              voteCount: eventInfo[6].toNumber(),
+              tickets: [] // On va remplir ça
+            };
+            
+            console.log(` Event: ${event.name}`);
+            
+            // IMPORTANT : Charger les billets
+            const ticketTypeIds = eventInfo[7]; // Array des IDs de billets
+            console.log(` ${ticketTypeIds.length} types de billets à charger`);
+            
+            for (let j = 0; j < ticketTypeIds.length; j++) {
+              const ticketId = ticketTypeIds[j].toNumber();
+              try {
+                const ticketType = await contract.ticketTypes(ticketId);
+                
+                const ticket = {
+                  id: ticketId,
+                  name: ticketType[1],
+                  price: ethers.utils.formatEther(ticketType[2]),
+                  maxSupply: ticketType[3].toNumber(),
+                  currentSupply: ticketType[4].toNumber(),
+                  hasOptions: ticketType[5],
+                  options: ticketType[6],
+                  royalty: ticketType[8]?.toNumber() || 0
+                };
+                
+                event.tickets.push(ticket);
+                console.log(`   Billet ${ticketId}: ${ticket.name} - ${ticket.price} ETH (${ticket.currentSupply}/${ticket.maxSupply})`);
+                
+              } catch (ticketError) {
+                console.error(`   Erreur chargement billet ${ticketId}:`, ticketError.message);
+              }
+            }
+            
+            // Ajouter seulement si pas annulé
+            if (!event.isCancelled) {
+              eventsData.push(event);
+              console.log(` Event ${eventId} ajouté avec ${event.tickets.length} billets`);
+            } else {
+              console.log(` Event ${eventId} annulé, non ajouté`);
+            }
+            
+          } catch (eventError) {
+            console.error(` Erreur chargement event ${eventId}:`, eventError.message);
+          }
+        }
+        
+        // Trier par date (plus récents en premier)
+        eventsData.sort((a, b) => b.date - a.date);
+        
+        console.log(`\n TOTAL: ${eventsData.length} événements chargés avec leurs billets`);
+        setEvents(eventsData);
+        return;
+      }
+    } catch (logError) {
+      console.log(" Erreur avec les logs, utilisation de la méthode fallback:", logError.message);
     }
-  };
-
+    
+    // Méthode 2 : Fallback - Scanner les IDs
+    console.log("\n Méthode fallback : scan des IDs 1 à 20...");
+    const eventsData = [];
+    
+    for (let i = 1; i <= 20; i++) {
+      try {
+        const eventInfo = await contract.getEventInfo(i);
+        
+        const event = {
+          id: i,
+          name: eventInfo[0],
+          organizer: eventInfo[1],
+          date: new Date(eventInfo[2].toNumber() * 1000),
+          isActive: eventInfo[3],
+          isCancelled: eventInfo[4],
+          totalRevenue: ethers.utils.formatEther(eventInfo[5]),
+          voteCount: eventInfo[6].toNumber(),
+          tickets: []
+        };
+        
+        // Charger les billets même en fallback
+        const ticketTypeIds = eventInfo[7];
+        for (const ticketId of ticketTypeIds) {
+          try {
+            const ticketType = await contract.ticketTypes(ticketId.toNumber());
+            event.tickets.push({
+              id: ticketId.toNumber(),
+              name: ticketType[1],
+              price: ethers.utils.formatEther(ticketType[2]),
+              maxSupply: ticketType[3].toNumber(),
+              currentSupply: ticketType[4].toNumber(),
+              hasOptions: ticketType[5],
+              options: ticketType[6],
+              royalty: ticketType[8]?.toNumber() || 0
+            });
+          } catch (e) {
+            console.log(`Erreur ticket ${ticketId}:`, e.message);
+          }
+        }
+        
+        if (!event.isCancelled && event.name) {
+          eventsData.push(event);
+          console.log(` Event ${i}: ${event.name} avec ${event.tickets.length} billets`);
+        }
+      } catch (e) {
+        if (i === 1) {
+          console.log(" Aucun événement trouvé!");
+        }
+        break;
+      }
+    }
+    
+    eventsData.sort((a, b) => b.date - a.date);
+    console.log(`\n TOTAL FINAL: ${eventsData.length} événements chargés`);
+    setEvents(eventsData);
+    
+  } catch (error) {
+    console.error(" Erreur loadEvents:", error);
+    setEvents([]);
+    showMessage('error', 'Erreur lors du chargement des événements');
+  } finally {
+    setLoading(false);
+  }
+};
+  
   // Charger mes billets
   const loadMyTickets = async (contract, userAccount) => {
     try {
@@ -408,19 +495,33 @@ function App() {
     }
   };
 
-  // Configuration des écouteurs d'événements
   const setupEventListeners = (contract) => {
-    contract.on('EventCreated', async () => {
-      await loadEvents(contract);
-    });
+  // Nettoyer les anciens listeners
+  contract.removeAllListeners();
+  
+  // Écouter la création d'événements
+  contract.on('EventCreated', async (eventId, name, organizer) => {
+    console.log('Nouvel événement créé:', name);
     
-    contract.on('TicketPurchased', async (buyer) => {
-      if (buyer.toLowerCase() === account.toLowerCase()) {
-        await loadMyTickets(contract, account);
-        await loadTokenBalance(blockTokenContract, account);
-      }
-    });
-  };
+    // Recharger la liste des événements
+    await loadEvents(contract);
+    showMessage('info', `Nouvel événement disponible: ${name}`);
+  });
+  
+  // Écouter les achats de billets
+  contract.on('TicketPurchased', async (buyer, ticketTypeId, amount) => {
+    console.log('Billet acheté');
+    
+    // Si c'est nous qui avons acheté
+    if (buyer.toLowerCase() === account.toLowerCase()) {
+      await loadMyTickets(contract, account);
+      await loadTokenBalance(blockTokenContract, account);
+    }
+    
+    // Recharger les événements pour mettre à jour les stocks
+    await loadEvents(contract);
+  });
+};
 
   // Afficher un message
   const showMessage = (type, text) => {
@@ -466,6 +567,113 @@ function App() {
     }
   }, [account]);
 
+  useEffect(() => {
+  // Quand le composant se démonte, nettoyer les listeners
+  return () => {
+    if (blockEventContract) {
+      blockEventContract.removeAllListeners();
+    }
+  };
+}, [blockEventContract]);
+
+const DebugPanel = () => (
+  <div className="fixed bottom-0 left-0 right-0 bg-black text-white p-4 z-50">
+    <h3 className="text-yellow-400 font-bold mb-2">🐛 DEBUG PANEL</h3>
+    <div className="grid grid-cols-4 gap-4 text-sm">
+      <div>
+        <span className="text-gray-400">Account:</span><br/>
+        {account ? `${account.slice(0, 6)}...` : 'Non connecté'}
+      </div>
+      <div>
+        <span className="text-gray-400">Contract:</span><br/>
+        {blockEventContract ? '✅ OK' : '❌ Manquant'}
+      </div>
+      <div>
+        <span className="text-gray-400">Events:</span><br/>
+        {Array.isArray(events) ? `${events.length} chargés` : '❌ Pas un array'}
+      </div>
+      <div>
+        <span className="text-gray-400">Loading:</span><br/>
+        {loading ? '⏳ Oui' : '✅ Non'}
+      </div>
+    </div>
+    
+    <div className="mt-3 flex gap-2">
+      <button
+        onClick={async () => {
+          console.log("=== DEBUG INFO ===");
+          console.log("1. Contract:", blockEventContract?.address);
+          console.log("2. Events:", events);
+          console.log("3. Loading:", loading);
+          
+          if (blockEventContract) {
+            console.log("4. Test getEventInfo(1)...");
+            try {
+              const info = await blockEventContract.getEventInfo(1);
+              console.log("✅ Event 1:", info[0]);
+            } catch (e) {
+              console.log("❌ Pas d'event 1");
+            }
+          }
+        }}
+        className="bg-blue-500 px-3 py-1 rounded text-xs"
+      >
+        📋 Log Info
+      </button>
+      
+      <button
+        onClick={async () => {
+          if (!blockEventContract) {
+            alert("Connectez-vous d'abord!");
+            return;
+          }
+          console.log("Chargement manuel...");
+          await loadEvents(blockEventContract);
+        }}
+        className="bg-green-500 px-3 py-1 rounded text-xs"
+      >
+        🔄 Recharger Events
+      </button>
+      
+      <button
+        onClick={async () => {
+          if (!blockEventContract) {
+            alert("Connectez-vous d'abord!");
+            return;
+          }
+          try {
+            console.log("Création event test...");
+            const tx = await blockEventContract.createEvent(
+              "Debug " + Date.now(),
+              Math.floor(Date.now() / 1000) + 86400,
+              150
+            );
+            console.log("TX:", tx.hash);
+            await tx.wait();
+            console.log("✅ Créé! Rechargement...");
+            await loadEvents(blockEventContract);
+          } catch (e) {
+            console.error("Erreur:", e);
+          }
+        }}
+        className="bg-purple-500 px-3 py-1 rounded text-xs"
+      >
+        ➕ Créer Event Test
+      </button>
+    </div>
+    
+    {events.length > 0 && (
+      <div className="mt-3 text-xs">
+        <span className="text-gray-400">Events chargés:</span>
+        {events.map(e => (
+          <span key={e.id} className="ml-2 text-green-400">
+            [{e.id}] {e.name}
+          </span>
+        ))}
+      </div>
+    )}
+  </div>
+);
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
       {/* Header */}
@@ -562,98 +770,15 @@ function App() {
               </button>
             </div>
 
-            {/* Tab: Événements */}
             {activeTab === 'events' && (
-              <div className="grid gap-6">
-                <h2 className="text-2xl font-bold">Événements Disponibles</h2>
-                
-                {events.length === 0 ? (
-                  <div className="bg-white rounded-xl shadow-lg p-12 text-center">
-                    <Calendar className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500">Aucun événement disponible pour le moment</p>
-                  </div>
-                ) : (
-                  <div className="grid gap-6 md:grid-cols-2">
-                    {events.map((event) => (
-                      <div key={event.id} className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition">
-                        <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-6 text-white">
-                          <h3 className="text-2xl font-bold mb-2">{event.name}</h3>
-                          <div className="flex items-center space-x-4 text-sm">
-                            <div className="flex items-center">
-                              <Calendar className="h-4 w-4 mr-1" />
-                              {formatDate(event.date)}
-                            </div>
-                            {event.voteCount > 0 && (
-                              <div className="flex items-center">
-                                <TrendingUp className="h-4 w-4 mr-1" />
-                                {event.voteCount} votes
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        
-                        <div className="p-6">
-                          <div className="space-y-4">
-                            {event.tickets.map((ticket) => (
-                              <div key={ticket.id} className="border rounded-lg p-4 hover:border-purple-300 transition">
-                                <div className="flex justify-between items-start mb-3">
-                                  <div className="flex-1">
-                                    <h4 className="font-semibold text-lg">{ticket.name}</h4>
-                                    {ticket.hasOptions && (
-                                      <p className="text-sm text-gray-600 mt-1">
-                                        <Plus className="h-3 w-3 inline mr-1" />
-                                        {ticket.options}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="text-2xl font-bold text-purple-600">
-                                      {ticket.price} ETH
-                                    </p>
-                                  </div>
-                                </div>
-                                
-                                <div className="mb-3">
-                                  <div className="flex justify-between text-sm text-gray-600 mb-1">
-                                    <span>{ticket.currentSupply} / {ticket.maxSupply} vendus</span>
-                                    <span>{getSoldPercentage(ticket.currentSupply, ticket.maxSupply)}%</span>
-                                  </div>
-                                  <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div 
-                                      className="bg-gradient-to-r from-purple-600 to-blue-600 h-2 rounded-full transition-all"
-                                      style={{ width: `${getSoldPercentage(ticket.currentSupply, ticket.maxSupply)}%` }}
-                                    />
-                                  </div>
-                                </div>
-                                
-                                <button
-                                  onClick={() => buyTicket(ticket.id, ticket.price)}
-                                  disabled={loading || ticket.currentSupply >= ticket.maxSupply}
-                                  className="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  {ticket.currentSupply >= ticket.maxSupply ? 'Épuisé' : 'Acheter'}
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                          
-                          {/* Voter si on a participé */}
-                          {myTickets.some(t => t.eventId === event.id) && (
-                            <button
-                              onClick={() => voteForEvent(event.id)}
-                              className="w-full mt-4 bg-gray-100 text-gray-700 py-2 rounded-lg hover:bg-gray-200 transition flex items-center justify-center space-x-2"
-                              disabled={loading}
-                            >
-                              <TrendingUp className="h-4 w-4" />
-                              <span>Voter pour cet événement (-5% prochain achat)</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <EventsDisplay 
+                events={events}
+                loading={loading}
+                onBuyTicket={buyTicket}
+                onVoteForEvent={voteForEvent}
+                myTickets={myTickets}
+                account={account}
+              />
             )}
 
             {/* Tab: Mes Billets */}
@@ -781,7 +906,7 @@ function App() {
                     </button>
                   </form>
                 </div>
-
+                
                 {/* Mes événements */}
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <div className="flex justify-between items-center mb-6">
@@ -983,7 +1108,7 @@ function App() {
           </div>
         )}
       </main>
-
+      <DebugPanel />
       {/* Footer */}
       <footer className="bg-gray-100 mt-20">
         <div className="max-w-7xl mx-auto px-4 py-8">

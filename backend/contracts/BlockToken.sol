@@ -11,7 +11,7 @@ contract BlockToken is ERC20, Ownable {
     mapping(address => uint256) public lastActivityTime;
     mapping(address => bool) public isEventCreator;
     
-    constructor() ERC20("BlockEvent Token", "BLK") {}
+    constructor() ERC20("BlockEvent Token", "BLOCK") {}
     
     function mint(address to, uint256 amount) public onlyOwner {
         require(totalSupply() + amount <= MAX_SUPPLY, "Offre maximale depassee");

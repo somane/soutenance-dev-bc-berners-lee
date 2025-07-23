@@ -118,7 +118,7 @@ contract BlockEvent is ERC1155, Ownable, ReentrancyGuard {
         emit EventCreated(newEventId, _name, msg.sender);
     }
     
-    // Nouvelle fonction: Annuler un événement et rembourser
+    // Annuler un événement et rembourser
     function cancelEvent(uint256 _eventId) public nonReentrant {
         Event storage eventInfo = events[_eventId];
         
@@ -209,7 +209,7 @@ contract BlockEvent is ERC1155, Ownable, ReentrancyGuard {
         // Mettre à jour les revenus
         eventInfo.totalRevenue += totalPrice;
         
-        // Calculer et distribuer les tokens BLK
+        // Calculer et distribuer les tokens BLOCK
         uint256 tokensToMint = (totalPrice * TOKENS_PER_10_EUROS) / (10 * 10**18); // Assumant 1 ETH = 1000€
         
         // 80% pour l'acheteur
@@ -326,7 +326,7 @@ contract BlockEvent is ERC1155, Ownable, ReentrancyGuard {
         Event storage eventInfo = events[_eventId];
         
         // Vérifier que l'utilisateur a des tokens
-        require(governanceToken.balanceOf(msg.sender) > 0, "Vous devez avoir des tokens BLK");
+        require(governanceToken.balanceOf(msg.sender) > 0, "Vous devez avoir des tokens BLOCK");
         
         // Vérifier que l'utilisateur a participé à l'événement
         bool participated = false;
